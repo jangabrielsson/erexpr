@@ -1,0 +1,32 @@
+
+(defun test1() 
+  (= 'a 'a)
+)
+(defun test2() 
+  (= 'a 'b)
+)
+(defun test3()
+  (= 1 1)
+)
+(defun test4()
+  (= 1 2)
+)
+(defun test5()
+  (= nil nil)
+)
+
+(defun test6()
+  (setf x (quote (1 2 3)))
+  (setf (car x) 10)
+  x
+)
+
+(defun test7()
+  (setf x 10)
+  (setf y 11)
+  (+ x y)
+)
+
+(defun test8()
+  ((lambda (x &rest y) (return x y)) 1 2 3 4 5)
+)
