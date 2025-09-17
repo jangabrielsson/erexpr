@@ -42,7 +42,7 @@ function trans.num(node) return node.value end
 function trans.str(node) return MAP({'quote',node.value},node) end
 local opMap = {
   add='+',sub='-',mul='*',div='/',mod='%',pow='^',neg='-', ['not'] = 'not', ['or'] = 'or', ['and'] = 'and',
-  andd='and',orr='or',notd='not',eq='=',neq='!=',lt='<',gt='>',lte='<=',gte='>=',
+  eq='=',neq='!=',lt='<',gt='>',lte='<=',gte='>=',betw='between'
 }
 local function getOp(op) return opMap[op] or error(fmt("Unknown op %s",op)) end
 function trans.unop(node) 
