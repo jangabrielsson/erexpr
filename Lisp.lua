@@ -535,8 +535,21 @@ function macro.dolist(expr,ctx) -- (dolist (elm list) . body)
   return MAP({{'lambda', {idx,list,var}, {'_loop', {'setf', var, {'aref',list,idx}}, {'breakif',{'=',var,nil}}, {'inc+',idx}, table.unpack(expr,3)}},1,listn},expr)
 end
 
-macro['loop'] = function(expr,ctx) -- (loop for x from 12 to 11 do ...
-  if expr[2] ~= 'for' then return {'_loop', table.unpack(expr,2)} end -- simple loop
+macro['loop'] = function(expr,ctx) -- (loop for x from 12 to 11 do ..., loop forin k v in ipairs(x) do ...
+  local ftyp = expr[2]
+  if not (ftyp ==  'for' or ftyp == 'forin') then return {'_loop', table.unpack(expr,2)} end -- simple loop
+
+  if ftyp == 'forin' then
+    local k,v,tab,offs = expr[3],expr[4],expr[6],0
+    if v=='in' then v = '_'; tab = expr[5]; offs = -1 end
+    local f,t = gensym('forinf'),gensym('forint')
+    local body = {table.unpack(expr,7+offs)}
+    return MAP({'let', {k,v,f,t}, 
+        {'psetf',{f,t,k,v},tab},
+        {'_loop', {'psetf',{k,v},{f,t,k}},{'breakif',{'not',k}},table.unpack(body)}}
+        ,expr)
+  end
+
   local var,start,stopv,by,offs = expr[3],expr[5],expr[7],1,0
   if expr[8] == 'by' then by = expr[9]; offs = 2 end
   local stop,step = gensym('for'),gensym('for')
@@ -649,8 +662,8 @@ function Lisp:__init(opts)
   self.env:setVar('false', false)
   self.env:setVar('not', function(a) return not a end)
   self.env:setVar('+', function(a,b) checkArgs(a,'number',b,'number') return a+b end)
-  self.env:setVar('*', function(a,b) return a*b end)
-  self.env:setVar('/', function(a,b) return a/b end)
+  self.env:setVar('*', function(a,b) checkArgs(a,'number',b,'number') return a*b end)
+  self.env:setVar('/', function(a,b) checkArgs(a,'number',b,'number') return a/b end)
   self.env:setVar('-', function(a,b) return b==nil and -a or a-b end)
   self.env:setVar('=', function(a,b) return a==b end)
   self.env:setVar('!=', function(a,b) return a~=b end)
@@ -658,10 +671,12 @@ function Lisp:__init(opts)
   self.env:setVar('>=', function(a,b) return a>=b end)
   self.env:setVar('<', function(a,b) return a<b end)
   self.env:setVar('<=', function(a,b) return a<=b end)
-  self.env:setVar('%', function(a,b) return a % b end)
-  self.env:setVar('^', function(a,b) return a ^ b end)
+  self.env:setVar('%', function(a,b) checkArgs(a,'number',b,'number') return a % b end)
+  self.env:setVar('^', function(a,b) checkArgs(a,'number',b,'number') return a ^ b end)
   self.env:setVar('aref', function(tab,idx) return tab[idx] end)
   self.env:setVar('print', print)
+  self.env:setVar('pairs', pairs)
+  self.env:setVar('ipairs', ipairs)
   self.env:setVar('table', function(...)
     local t,args = {},{...}
     for i=1,#args,2 do t[args[i]] = args[i+1] end
@@ -742,6 +757,7 @@ function Lisp.runWith(file)
 end
 
 -- Lisp.runWith("tests/loops.lsp")('(test5)')
+-- Lisp.runWith("tests/loops.lsp")('(test7 2 8 2)')
 -- Lisp.runWith("tests/loops.lsp")('(test2 2 8 2)')
 -- Lisp.runWith("tests/loops.lsp")('(test3 (quote (2 8 2)))')
 -- Lisp.runWith("tests/scope.lsp")('(test1)','(test2)')

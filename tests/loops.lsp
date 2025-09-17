@@ -21,3 +21,13 @@
   (setf a 1)
   (loop (inc+ a 1) (print a) (breakif (> a 10)))
 )
+
+(defun test6(list)
+  (loop forin k v in (ipairs list) do (print k v))
+  (return 42)
+)
+
+(defun test7(lis)
+  (loop forin k v in (pairs list) do (print k v))
+  (return 42)
+)
