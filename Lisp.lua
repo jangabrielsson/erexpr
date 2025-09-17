@@ -519,6 +519,7 @@ end
 local gcount = 100
 local function gensym(str) gcount = gcount+1; return fmt("__%s_%d__",str,gcount) end
 
+-------------- Macros --------------------------------
 local macro = {}
 
 function macro.dotimes(expr,ctx) -- (dotimes (var count) . body)
@@ -569,6 +570,44 @@ macro.defspec = function(expr,ctx)
   local fun = MAP({'nlambda',table.unpack(expr,3)},expr)
   return MAP({'setf',name,fun},expr)
 end
+------------------------------------------------------------
+
+local function createEnvironment(vars,nonVarHandler)
+  local self = { error = function(msg) fibaro.error(__TAG,msg) end, nonVarHandler = nonVarHandler }
+  vars = vars or {}
+  local topvars = vars
+  function self:getVar(name) local v = vars[name] if v then return v[1] elseif self.nonVarHandler then return self.nonVarHandler(name) end end
+  function self:setLocal(name,val) rawset(vars,name,{val}) end
+  function self:setVar(name,val) local v = vars[name] if v then v[1] = val else rawset(topvars,name,{val}) end end
+  function self:setGlobal(name,val) local v = rawget(topvars,name) if v then v[1] = val else rawset(topvars,name,{val}) end end
+  function self:getGlobal(name) local v = rawget(topvars,name) return v and v[1] end
+  function self:dump(pp)
+    for k,v in pairs(vars) do
+      print(k,"=",v[1])
+    end
+  end
+  local fd = 1
+  function self:pushFrame(locals)
+    if fd > 2000 then self.error("Max stack depth (2000) exceeded") return true end
+    vars = setmetatable(locals, { __index = vars })
+    fd = fd + 1
+    locals.__fd  = fd
+    --print(fd)
+  end
+  function self:popFrame() 
+    vars = getmetatable(vars).__index
+    fd = vars.__fd or 1
+  end
+  function self:getStackPoint() return vars end
+  function self:unwindStack(sp) vars = sp; fd = vars.__fd or 1 end
+  function self:copy(v,nvh)
+    local e = createEnvironment(v or vars, nvh or self.nonVarHandler)
+    return e
+  end
+  return self
+end
+
+---------------------------------------------------------------
 
 function compile(expr,ctx)
   local typ = type(expr)
@@ -602,42 +641,6 @@ function compile(expr,ctx)
   end
 end
 
-local function createEnvironment(vars,nonVarHandler)
-  local self = { error = function(msg) fibaro.error(__TAG,msg) end, nonVarHandler = nonVarHandler }
-  vars = vars or {}
-  local topvars = vars
-  function self:getVar(name) local v = vars[name] if v then return v[1] elseif self.nonVarHandler then return self.nonVarHandler(name) end end -- 1500 0.333
-  function self:setLocal(name,val) rawset(vars,name,{val}) end
-  function self:setVar(name,val) local v = vars[name] if v then v[1] = val else rawset(topvars,name,{val}) end end
-  function self:setGlobal(name,val) 
-    local v = rawget(topvars,name) if v then v[1] = val else rawset(topvars,name,{val}) end 
-  end
-  function self:dump(pp)
-    for k,v in pairs(vars) do
-      print(k,"=",v[1])
-    end
-  end
-  local fd = 1
-  function self:pushFrame(locals)
-    if fd > 2000 then self.error("Max stack depth (2000) exceeded") return true end
-    vars = setmetatable(locals, { __index = vars })
-    fd = fd + 1
-    locals.__fd  = fd
-    --print(fd)
-  end
-  function self:popFrame() 
-    vars = getmetatable(vars).__index
-    fd = vars.__fd or 1
-  end
-  function self:getStackPoint() return vars end
-  function self:unwindStack(sp) vars = sp; fd = vars.__fd or 1 end
-  function self:copy(v,nvh)
-    local e = createEnvironment(v or vars, nvh or self.nonVarHandler)
-    return e
-  end
-  return self
-end
-
 local function Error(info,tostr)
   return setmetatable(info,{ __tostring = function (i) return tostr(i) end})
 end
@@ -652,36 +655,52 @@ local function checkArgs(e1,t1,e2,t2)
   if e2 and type(e2) ~= t2 then error(Error({type = 'typeErr', n=2, expr=e2, expected=t2}, err.type)) end
 end
 
+-------------------------------------------------------------------------------------
+
 Lisp = {}
 class 'Lisp'
 function Lisp:__init(opts)
   self.opts = opts or {}
   self.macro,self.setfs = {},{}
   self.env = createEnvironment()
-  self.env:setVar('true', true)
-  self.env:setVar('false', false)
-  self.env:setVar('not', function(a) return not a end)
-  self.env:setVar('+', function(a,b) checkArgs(a,'number',b,'number') return a+b end)
-  self.env:setVar('*', function(a,b) checkArgs(a,'number',b,'number') return a*b end)
-  self.env:setVar('/', function(a,b) checkArgs(a,'number',b,'number') return a/b end)
-  self.env:setVar('-', function(a,b) return b==nil and -a or a-b end)
-  self.env:setVar('=', function(a,b) return a==b end)
-  self.env:setVar('!=', function(a,b) return a~=b end)
-  self.env:setVar('>', function(a,b) return a>b end)
-  self.env:setVar('>=', function(a,b) return a>=b end)
-  self.env:setVar('<', function(a,b) return a<b end)
-  self.env:setVar('<=', function(a,b) return a<=b end)
-  self.env:setVar('%', function(a,b) checkArgs(a,'number',b,'number') return a % b end)
-  self.env:setVar('^', function(a,b) checkArgs(a,'number',b,'number') return a ^ b end)
-  self.env:setVar('aref', function(tab,idx) return tab[idx] end)
-  self.env:setVar('print', print)
-  self.env:setVar('pairs', pairs)
-  self.env:setVar('ipairs', ipairs)
-  self.env:setVar('table', function(...)
+  self.var = setmetatable({},{
+    __index = function(t,k) return self.env:getGlobal(k) end,
+    __newindex = function(t,k,v) self.env:setGlobal(k,v) end
+  })
+  self.async = setmetatable({},{ -- function(cb,...) ... cb(...) end
+    __newindex = function(t,k,fun)
+      local function cfun(cont,env,...)
+        local function cb(...) return cont(...) end
+        local res = {pcall(fun,cb,...)}
+        return env.suspend(ref)
+      end
+      self.var[k] = CFUN(cfun,{},false)
+    end
+  })
+  self.var['true'] =  true
+  self.var['false'] = false
+  self.var['not'] = function(a) return not a end
+  self.var['+'] = function(a,b) checkArgs(a,'number',b,'number') return a+b end
+  self.var['*'] = function(a,b) checkArgs(a,'number',b,'number') return a*b end
+  self.var['/'] = function(a,b) checkArgs(a,'number',b,'number') return a/b end
+  self.var['-'] = function(a,b) return b==nil and -a or a-b end
+  self.var['='] = function(a,b) return a==b end
+  self.var['!='] = function(a,b) return a~=b end
+  self.var['>'] = function(a,b) return a>b end
+  self.var['>='] = function(a,b) return a>=b end
+  self.var['<'] = function(a,b) return a<b end
+  self.var['<='] = function(a,b) return a<=b end
+  self.var['%'] = function(a,b) checkArgs(a,'number',b,'number') return a % b end
+  self.var['^'] = function(a,b) checkArgs(a,'number',b,'number') return a ^ b end
+  self.var.aref = function(tab,idx) return tab[idx] end
+  self.var.print = print
+  self.var.pairs = pairs
+  self.var.ipairs = ipairs
+  self.var.table = function(...)
     local t,args = {},{...}
     for i=1,#args,2 do t[args[i]] = args[i+1] end
     return t
-  end)
+  end
   self.env.error = function(msg) fibaro.error(__TAG,msg) end
   for k,v in pairs(macro) do self.macro[k] = v end
   self.setfs.car = function(env, val, obj) obj[1] = val; return val end
